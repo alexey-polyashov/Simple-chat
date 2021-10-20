@@ -3,106 +3,83 @@ package server;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ServerClass {
 
-    private ServerSocket sSocket;
-    private Socket clientSocket;
+    private final int PORT = 8181;
 
-    private DataInputStream dis = null;
-    private DataOutputStream dos = null;
-
-
-    public ServerClass(int port) throws IOException {
-
-        sSocket = new ServerSocket(port);
-
-    }
-
-    public void start(){
-
-        try {
-            System.out.println("Start server");
-            clientSocket = sSocket.accept();
-            System.out.println("Client is connected");
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-    }
-
-    public void closeConnection(DataOutputStream dos, DataInputStream dis){
-        try {
-            dos.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        try {
-            dis.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        try {
-            clientSocket.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-    }
+    private AuthService authService;
+    private List<ClientHandler> clients;
 
     public void listenPort(){
 
-        try {
-            dis = new DataInputStream(clientSocket.getInputStream());
-            dos = new DataOutputStream(clientSocket.getOutputStream());
+        System.out.println("Start server");
+
+        try(ServerSocket sSocket = new ServerSocket(PORT)) {
+            authService = new BaseAuthService();
+            authService.start();
+            clients = new ArrayList<>();
+            while(true) {
+                System.out.println("Server wait connection");
+                Socket clientSocket = sSocket.accept();
+                new ClientHandler(this, clientSocket);
+                System.out.println("New client connected");
+            }
         } catch (IOException e) {
             e.printStackTrace();
+        } finally {
+            if(authService != null){
+                authService.stop();
+            }
         }
 
-        BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+    }
 
-        Thread thr = new Thread(()-> {
-            while (true) {
-
-                try {
-                    String inMessage = dis.readUTF();
-                    System.out.println("Received message: " + inMessage);
-                    if (inMessage.equalsIgnoreCase("/exit")) {
-                        dos.writeUTF("/exit");
-                        dos.flush();
-                        System.out.println("Server is disconnected");
-                        break;
-                    } else {
-                        dos.writeUTF("EHO: " + inMessage);
-                        dos.flush();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
+    public synchronized boolean isNickBusy(String nick){
+        for(ClientHandler o: clients){
+            if(o.getName().equals(nick)){
+                return true;
             }
-            closeConnection(dos, dis);
         }
-        );
-        thr.start();
+        return false;
+    }
 
-        Thread thr2 = new Thread(()->{
-            while(true){
-                try {
-                    if(br.ready()){
-                        String sb = br.readLine();
-                        dos.writeUTF("SERVER: " + sb);
-                        dos.flush();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+    public synchronized void subscribe(ClientHandler o){
+        clients.add(o);
+    }
+
+    public synchronized void unsubscribe(ClientHandler o){
+        clients.remove(o);
+    }
+
+    public AuthService getAuthService(){
+        return authService;
+    }
+
+    public synchronized void broadcastMsg(String msg){
+        for (ClientHandler o: clients){
+            o.sendMsg(msg);
+        }
+    }
+
+    public synchronized boolean senMessageToClient(String msg, String nick){
+        for (ClientHandler o: clients){
+            if(o.getName().equalsIgnoreCase(nick)) {
+                o.sendMsg(msg);
+                return true;
             }
-        });
-        thr2.setDaemon(true);
-        thr2.start();
+        }
+        return false;
+    }
 
+    public synchronized void broadcastClientsList() {
+        StringBuilder sb = new StringBuilder("/clients ");
+        for (ClientHandler o : clients) {
+            sb.append(o.getName() + " ");
+        }
+        broadcastMsg(sb.toString());
     }
 
 
